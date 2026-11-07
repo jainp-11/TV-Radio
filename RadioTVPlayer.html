@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Radio + TV Player</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+<style>
+:root{
+  --bg:#f4f6f9; --panel:#ffffff; --text:#1d2433; --muted:#6b7385; --line:#d9dee7;
+  --accent:#2196f3; --accent-text:#fff; --hover:#eef3fb; --sel:#dbeafe; --ok:#2e9d4f; --warn:#c0392b;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#12151c; --panel:#1b2030; --text:#e6e9f0; --muted:#98a0b3; --line:#2c3347;
+    --accent:#4da3ff; --accent-text:#0b1220; --hover:#242b40; --sel:#27406b;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#12151c; --panel:#1b2030; --text:#e6e9f0; --muted:#98a0b3; --line:#2c3347;
+  --accent:#4da3ff; --accent-text:#0b1220; --hover:#242b40; --sel:#27406b;
+}
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font:14px/1.4 system-ui,"Segoe UI",sans-serif;display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:8px;padding:6px 12px;background:var(--panel);border-bottom:1px solid var(--line)}
+header h1{font-size:15px;margin:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+button,select,input[type=text],input[type=search]{font:inherit;color:inherit}
+button{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 10px;cursor:pointer;white-space:nowrap}
+button:hover:not(:disabled){background:var(--hover)}
+button:disabled{opacity:.45;cursor:default}
+button.primary{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
+button.on{background:var(--ok);color:#fff;border-color:var(--ok)}
+input[type=text],input[type=search],select{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 8px;min-width:0}
+input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+
+main{flex:1;min-height:0;display:flex}
+#left{width:320px;min-width:260px;max-width:60vw;display:flex;flex-direction:column;gap:8px;padding:8px;overflow:auto;background:var(--bg)}
+#splitter{width:6px;cursor:col-resize;background:var(--line);flex:none}
+#splitter:hover{background:var(--accent)}
+#right{flex:1;min-width:0;display:flex;flex-direction:column;padding:8px;gap:8px}
+
+.tabs{display:flex;gap:4px}
+.tabs button{flex:1;border-radius:6px}
+.tabs button.active{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
+#nowPlaying{text-align:center;font-weight:700;color:var(--accent);padding:4px;word-break:break-word}
+fieldset{border:1px solid var(--line);border-radius:8px;margin:0;padding:8px;background:var(--panel)}
+legend{padding:0 4px;color:var(--muted);font-size:12px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.vol{display:flex;align-items:center;gap:8px}
+.vol input{flex:1;min-width:0}
+#bwInd{color:var(--muted);font-size:11px}
+
+.channels{display:flex;flex-direction:column;gap:6px;min-height:0;flex:1}
+.searchrow{display:flex;gap:6px;align-items:center}
+.searchrow input{flex:1}
+.count{color:var(--muted);font-size:11px;white-space:nowrap}
+.list{flex:1;min-height:120px;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:6px;margin:0;padding:0;list-style:none}
+.list li{padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px}
+.list li:hover{background:var(--hover)}
+.list li.sel{background:var(--sel)}
+.list li small{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:45%}
+.list li.empty{cursor:default;color:var(--muted)}
+.info{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:12px;color:var(--muted);white-space:pre-wrap;word-break:break-all;max-height:90px;overflow:auto;min-height:36px}
+.btnrow{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+
+#videoWrap{flex:1;min-height:0;background:#000;border-radius:6px;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden}
+#videoWrap video{width:100%;height:100%;object-fit:contain;background:#000}
+#vdelayCanvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;pointer-events:none}
+#fsBar{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);width:min(560px,92%);background:rgba(20,24,34,.88);color:#fff;
+  border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:10px 14px;display:grid;grid-template-columns:auto 1fr auto;gap:8px 12px;align-items:center;z-index:5;backdrop-filter:blur(4px)}
+#fsBar span.v{min-width:56px;text-align:right;font-variant-numeric:tabular-nums}
+#fsBar button{background:rgba(255,255,255,.12);color:#fff;border-color:rgba(255,255,255,.25)}
+#fsBar input[type=range]{width:100%}
+#fsBar .btns{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap}
+#fsBar .hint{grid-column:1/-1;font-size:11px;opacity:.7}
+.syncrow{display:flex;align-items:center;gap:8px}
+.syncrow input{flex:1;min-width:0}
+#videoMsg{position:absolute;color:#bbb;pointer-events:none;text-align:center;padding:12px}
+
+#status{padding:3px 12px;font-size:12px;color:var(--muted);background:var(--panel);border-top:1px solid var(--line);min-height:24px}
+
+dialog{border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text);padding:16px;max-width:min(900px,96vw);width:min(900px,96vw)}
+dialog.small{width:min(440px,96vw)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog h2{margin:0 0 10px;font-size:16px}
+.form{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:center}
+.form label{color:var(--muted)}
+.dlgbtns{display:flex;justify-content:flex-end;gap:8px;margin-top:12px;flex-wrap:wrap}
+.filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.filters input{flex:1;min-width:120px}
+.results{max-height:50vh;overflow:auto;border:1px solid var(--line);border-radius:6px}
+.results table{width:100%;border-collapse:collapse;font-size:13px}
+.results th{position:sticky;top:0;background:var(--panel);text-align:left;padding:5px 8px;border-bottom:1px solid var(--line);color:var(--muted)}
+.results td{padding:5px 8px;border-bottom:1px solid var(--line);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.results tr{cursor:pointer}
+.results tr:hover{background:var(--hover)}
+.results tr.sel{background:var(--sel)}
+.eq{display:grid;grid-template-columns:repeat(10,1fr);gap:4px;text-align:center;margin:10px 0}
+.eq input[type=range]{writing-mode:vertical-lr;direction:rtl;height:150px;width:100%;margin:6px 0}
+.eq span{font-size:10px;color:var(--muted)}
+.rowflex{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+
+@media (max-width:760px){
+  main{flex-direction:column;overflow:auto}
+  #left{width:auto;max-width:none;min-width:0;overflow:visible}
+  #splitter{display:none}
+  #right{min-height:60vh}
+  .eq input[type=range]{height:110px}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>🎙️ Internet Radio + 📺 TV Player</h1>
+  <button id="btnSettings">⚙️ Settings</button>
+  <button id="btnData">💾 Data</button>
+  <button id="btnTheme" title="Toggle dark / light">🌓</button>
+</header>
+
+<main>
+  <section id="left">
+    <div class="tabs" role="tablist">
+      <button id="tabRadio" class="active" role="tab">📻 Radio</button>
+      <button id="tabTv" role="tab">📺 TV</button>
+    </div>
+    <div id="nowPlaying">🎵 Not Playing</div>
+
+    <fieldset>
+      <legend>Controls</legend>
+      <div class="grid2">
+        <button id="btnPlay" class="primary">▶ Play</button>
+        <button id="btnStop" disabled>⏹ Stop</button>
+        <button id="btnFull">⛶ Fullscreen</button>
+        <button id="btnBrowser" title="Open stream URL in a new tab">🌐 Browser</button>
+        <button id="btnEq">🎛️ Equalizer</button>
+        <button id="btnMute">🔇 Mute</button>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Volume</legend>
+      <div class="vol"><input id="vol" type="range" min="0" max="100" value="70" aria-label="Volume"><span id="volLabel">70%</span></div>
+    </fieldset>
+    <fieldset>
+      <legend>A/V Sync</legend>
+      <div class="syncrow">
+        <input id="sync" type="range" min="-2000" max="2000" step="100" value="0" aria-label="Audio/video sync offset">
+        <span id="syncLabel" class="count">0.0 s</span>
+        <button id="syncReset" title="Reset to 0">↺</button>
+      </div>
+      <div id="syncNote" class="count" hidden style="white-space:normal;color:var(--warn)">This stream blocks audio processing, so + (delaying the sound) isn't available; use − instead.</div>
+      <div class="count" style="white-space:normal;margin-top:4px">+ delays the sound, − delays the picture (±2 s).</div>
+    </fieldset>
+    <div id="bwInd"></div>
+
+    <div id="tvListSlot" class="channels"></div>
+  </section>
+
+  <div id="splitter" title="Drag to resize"></div>
+
+  <section id="right">
+    <div id="radioListSlot" class="channels"></div>
+    <div id="videoWrap" hidden>
+      <video id="video" playsinline></video>
+      <canvas id="vdelayCanvas" hidden></canvas>
+      <div id="videoMsg">Select a TV channel to play</div>
+      <div id="fsBar" hidden>
+        <label for="fsVol">🔊 Volume</label><input id="fsVol" type="range" min="0" max="100"><span class="v" id="fsVolLabel">70%</span>
+        <label for="fsSync">⏱ A/V sync</label><input id="fsSync" type="range" min="-2000" max="2000" step="100"><span class="v" id="fsSyncLabel">0.0 s</span>
+        <div class="btns"><button id="fsMute">🔇 Mute</button><button id="fsReset">↺ Sync 0</button><button id="fsExit">✕ Exit fullscreen</button></div>
+        <div class="hint">+ delays the sound, − delays the picture. Click the picture to show or hide this panel.</div>
+      </div>
+    </div>
+  </section>
+</main>
+<div id="status" role="status">Ready</div>
+
+<!-- Add / edit station -->
+<dialog id="dlgStation" class="small">
+  <h2 id="dlgStationTitle">Add Station</h2>
+  <div class="form">
+    <label for="stName">Name</label><input id="stName" type="text">
+    <label for="stUrl">URL</label><input id="stUrl" type="text" placeholder="https://…">
+    <label for="stGenre">Genre</label><input id="stGenre" type="text">
+    <label for="stCountry">Country</label><input id="stCountry" type="text">
+    <label for="stExtra">Extra</label><input id="stExtra" type="text">
+  </div>
+  <div class="dlgbtns"><button id="stCancel">Cancel</button><button id="stOk" class="primary">Save</button></div>
+</dialog>
+
+<!-- Search radio / TV -->
+<dialog id="dlgSearch">
+  <h2 id="searchTitle">Search</h2>
+  <div class="filters">
+    <input id="sName" type="search" placeholder="Name">
+    <input id="sCountry" type="search" placeholder="Country (e.g. India, US, UK)">
+    <input id="sExtra" type="search" placeholder="Tag">
+    <button id="sGo" class="primary">🔍 Search</button>
+  </div>
+  <div class="results"><table><thead id="sHead"></thead><tbody id="sBody"></tbody></table></div>
+  <div id="pvBox" hidden style="margin-top:8px">
+    <video id="pvVideo" controls playsinline style="width:100%;max-height:30vh;background:#000;border-radius:6px"></video>
+    <div id="pvMsg" class="count" style="white-space:normal"></div>
+  </div>
+  <div id="sStatus" class="count" style="margin-top:6px"></div>
+  <div class="dlgbtns">
+    <button id="sPreview" disabled>▶ Preview</button>
+    <button id="sAdd" class="primary" disabled>➕ Add Selected</button>
+    <button id="sClose">Close</button>
+  </div>
+</dialog>
+
+<!-- Settings -->
+<dialog id="dlgSettings" class="small">
+  <h2>Bandwidth & Quality</h2>
+  <div class="form">
+    <label for="setMode">Mode</label>
+    <select id="setMode">
+      <option value="normal">⚡ Normal</option>
+      <option value="low">🔽 Low Bandwidth (≤480p)</option>
+      <option value="ultra_low">🐢 Ultra Low (≤240p)</option>
+    </select>
+    <label for="setBuf">Buffer (s)</label>
+    <input id="setBuf" type="text" inputmode="numeric">
+  </div>
+  <p class="count" style="white-space:normal">Applies to the next stream you play. Low modes cap the HLS video resolution and reduce buffering.</p>
+  <div class="dlgbtns"><button id="setCancel">Cancel</button><button id="setOk" class="primary">Save</button></div>
+</dialog>
+
+<!-- Equalizer -->
+<dialog id="dlgEq">
+  <h2>🎛️ Equalizer</h2>
+  <div class="rowflex">
+    <select id="eqPreset" aria-label="Preset"></select>
+    <button id="eqApply">Apply Preset</button>
+    <label class="rowflex"><input id="eqEnable" type="checkbox"> Enable Equalizer</label>
+    <button id="eqReset">Reset All</button>
+  </div>
+  <div class="eq" id="eqBands"></div>
+  <div id="eqNote" class="count" style="white-space:normal"></div>
+  <div class="dlgbtns"><button id="eqClose" class="primary">Close</button></div>
+</dialog>
+
+<!-- Data -->
+<dialog id="dlgData" class="small">
+  <h2>Station data</h2>
+  <p class="count" style="white-space:normal">Your lists are stored in this browser. Export to back up or move them; import also accepts the desktop app's <code>radio_tv_stations.json</code>.</p>
+  <div class="dlgbtns" style="justify-content:flex-start">
+    <button id="dataExport">⬇ Export</button>
+    <button id="dataImport">⬆ Import</button>
+    <button id="dataReset">Reset to defaults</button>
+  </div>
+  <input id="dataFile" type="file" accept=".json,application/json" hidden>
+  <div class="dlgbtns"><button id="dataClose" class="primary">Close</button></div>
+</dialog>
+
+<script>
+"use strict";
+/* ------------------------------------------------------------------ helpers */
+const $ = id => document.getElementById(id);
+const text = (v, d = "") => v == null ? d : Array.isArray(v) ? (v.filter(Boolean).join(", ") || d) : String(v);
+const store = {
+  get(k, d){ try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+let statusTimer;
+function status(msg, ms = 0){
+  $("status").textContent = msg;
+  clearTimeout(statusTimer);
+  if (ms) statusTimer = setTimeout(() => $("status").textContent = "Ready", ms);
+}
+
+/* --------------------------------------------------------------------- data */
+const DEFAULTS = {
+  radio: [
+    {name:"Radio Paradise", url:"https://stream.radioparadise.com/mp3-192", genre:"Various", country:"Global", extra:""},
+    {name:"SomaFM Groove Salad", url:"https://ice1.somafm.com/groovesalad-128-mp3", genre:"Ambient", country:"USA", extra:""},
+    {name:"BBC Radio 1", url:"https://stream.live.vc.bbcmedia.co.uk/bbc_radio_one", genre:"Pop", country:"UK", extra:""}
+  ],
+  tv: [
+    {name:"NASA TV", url:"https://ntv1.akamaized.net/hls/live/2014075/NASA-NTV1-PGM/master.m3u8", genre:"Science", country:"USA", extra:"HD"},
+    {name:"France 24 English", url:"https://live.france24.com/fr24/fr24_web/playlist.m3u8", genre:"News", country:"France", extra:""},
+    {name:"Al Jazeera English", url:"https://live-hls.web-media.io/ajen/ajen.m3u8", genre:"News", country:"Qatar", extra:""}
+  ]
+};
+const data = store.get("radiotv.data", null) || JSON.parse(JSON.stringify(DEFAULTS));
+data.radio = data.radio || []; data.tv = data.tv || [];
+const saveData = () => store.set("radiotv.data", data);
+
+const settings = Object.assign({mode:"normal", buffer:10, volume:70, sync:0, eq:{enabled:false, values:Array(10).fill(0)}},
+                               store.get("radiotv.settings", {}));
+const saveSettings = () => store.set("radiotv.settings", settings);
+
+/* ------------------------------------------------------------ channel lists */
+class ChannelList {
+  constructor(kind, slot){
+    this.kind = kind; this.items = data[kind]; this.current = null; this.filter = "";
+    const label = kind === "radio" ? "stations" : "channels";
+    slot.innerHTML = `
+      <div class="searchrow">
+        <span>🔍</span>
+        <input type="search" placeholder="Search ${label} by name, genre, or country…" aria-label="Filter ${label}">
+        <span class="count"></span>
+      </div>
+      <ul class="list" role="listbox"></ul>
+      <div class="btnrow">
+        <button data-a="add">➕ Add</button><button data-a="edit">✏️ Edit</button>
+        <button data-a="remove">❌ Remove</button><button data-a="search">🔍 Search online</button>
+      </div>
+      <div class="info"></div>`;
+    this.root = slot;
+    this.input = slot.querySelector("input");
+    this.ul = slot.querySelector("ul");
+    this.countEl = slot.querySelector(".count");
+    this.infoEl = slot.querySelector(".info");
+    this.input.addEventListener("input", () => { this.filter = this.input.value.trim().toLowerCase(); this.render(); });
+    this.ul.addEventListener("click", e => { const li = e.target.closest("li[data-i]"); if (li) this.select(this.view[+li.dataset.i], true); });
+    slot.querySelector(".btnrow").addEventListener("click", e => {
+      const a = e.target.closest("button")?.dataset.a; if (a) this[a]();
+    });
+    this.render();
+  }
+  sorted(){ return [...this.items].sort((a, b) => text(a.name).localeCompare(text(b.name), undefined, {sensitivity:"base", numeric:true})); }
+  render(){
+    const f = this.filter;
+    this.view = this.sorted().filter(s => !f ||
+      [s.name, s.genre, s.country].some(v => text(v).toLowerCase().includes(f)));
+    this.ul.innerHTML = "";
+    if (!this.view.length){
+      const li = document.createElement("li"); li.className = "empty";
+      li.textContent = f ? "🔍 No matching channels found" : "No entries yet — use Add or Search online";
+      this.ul.append(li);
+    }
+    this.view.forEach((s, i) => {
+      const li = document.createElement("li"); li.dataset.i = i; li.role = "option";
+      if (s === this.current) li.classList.add("sel");
+      const n = document.createElement("span"); n.textContent = text(s.name);
+      const g = document.createElement("small"); g.textContent = text(s.genre, "?");
+      li.append(n, g); this.ul.append(li);
+    });
+    this.countEl.textContent = f ? `${this.view.length} matches` : `${this.items.length} ${this.kind === "radio" ? "stations" : "channels"}`;
+  }
+  select(s, play){
+    this.current = s; this.render();
+    this.infoEl.textContent = `Name: ${text(s.name,"N/A")}\nURL: ${text(s.url,"N/A")}\nGenre: ${text(s.genre,"N/A")}\nCountry: ${text(s.country,"N/A")}\nExtra: ${text(s.extra,"N/A")}`;
+    if (play) player.play(this.kind, s);
+  }
+  add(){ openStationDialog(null, st => { this.items.push(st); this.commit(`Added: ${st.name}`); }); }
+  edit(){
+    if (!this.current) return alert("Select an entry first.");
+    openStationDialog(this.current, st => {
+      const i = this.items.indexOf(this.current); this.items[i] = st; this.current = st; this.commit(`Updated: ${st.name}`);
+    });
+  }
+  remove(){
+    if (!this.current) return alert("Select an entry first.");
+    if (!confirm(`Remove '${this.current.name}'?`)) return;
+    this.items.splice(this.items.indexOf(this.current), 1); this.current = null; this.infoEl.textContent = "";
+    this.commit("Removed");
+  }
+  search(){ openSearch(this.kind, st => this.addFound(st)); }
+  addFound(st){
+    if (this.items.some(s => s.url === st.url)){ status(`'${st.name}' is already in your list`, 3000); return false; }
+    this.items.push(st); this.commit(`Added: ${st.name}`); return true;
+  }
+  commit(msg){ saveData(); this.render(); status(msg, 3000); }
+  reload(){ this.items = data[this.kind]; this.current = null; this.infoEl.textContent = ""; this.render(); }
+}
+
+/* ------------------------------------------------------------ station dialog */
+function openStationDialog(st, onSave){
+  const d = $("dlgStation");
+  $("dlgStationTitle").textContent = st ? "Edit" : "Add";
+  $("stName").value = text(st?.name); $("stUrl").value = text(st?.url);
+  $("stGenre").value = text(st?.genre); $("stCountry").value = text(st?.country); $("stExtra").value = text(st?.extra);
+  $("stOk").onclick = () => {
+    const name = $("stName").value.trim(), url = $("stUrl").value.trim();
+    if (!name || !url) return alert("Name and URL are required.");
+    onSave({name, url, genre:$("stGenre").value.trim(), country:$("stCountry").value.trim(), extra:$("stExtra").value.trim()});
+    d.close();
+  };
+  $("stCancel").onclick = () => d.close();
+  d.showModal(); $("stName").focus();
+}
+
+/* ------------------------------------------------------------------ player */
+const BW = {
+  normal:    {maxHeight:Infinity, name:"Normal", savings:"0%"},
+  low:       {maxHeight:480,      name:"Low Bandwidth", savings:"~40-60%"},
+  ultra_low: {maxHeight:240,      name:"Ultra Low Bandwidth", savings:"~80-90%"}
+};
+const EQ_FREQS = [32,64,125,250,500,1000,2000,4000,8000,16000];
+const EQ_LABELS = ["32 Hz","64 Hz","125 Hz","250 Hz","500 Hz","1 kHz","2 kHz","4 kHz","8 kHz","16 kHz"];
+const EQ_PRESETS = {
+  "Flat":[0,0,0,0,0,0,0,0,0,0],"Classical":[0,0,0,0,0,0,-7,-7,-7,-9],"Club":[0,0,8,5,5,5,3,0,0,0],
+  "Dance":[9,7,2,0,0,-5,-7,-7,0,0],"Full Bass":[-8,9,9,5,1,-4,-8,-10,-11,-11],
+  "Full Treble":[-9,-9,-9,-4,2,11,16,16,16,16],"Headphones":[4,11,5,-3,-2,1,4,9,12,14],
+  "Large Hall":[10,10,5,5,0,-4,-4,-4,0,0],"Live":[-4,0,4,5,5,5,4,2,2,2],"Party":[7,7,0,0,0,0,0,0,7,7],
+  "Pop":[-1,4,7,8,5,0,-2,-2,-1,-1],"Reggae":[0,0,0,-5,0,6,6,0,0,0],"Rock":[8,4,-5,-8,-3,4,8,11,11,11],
+  "Ska":[-2,-4,-4,0,4,5,8,9,11,9],"Soft":[4,1,0,-2,0,4,8,9,11,12],"Soft Rock":[4,4,2,0,-4,-5,-3,0,2,8],
+  "Techno":[8,5,0,-5,-4,0,8,9,9,8]
+};
+
+const vdelay = {
+  on:false, delay:0, ring:[], pool:[], raf:0, video:null, last:0,
+  start(video, ms){
+    this.delay = ms; this.video = video;
+    if (this.on) return;
+    this.on = true;
+    const c = $("vdelayCanvas"); c.hidden = false; this.ctx = c.getContext("2d");
+    this.tick = this.tick.bind(this); this.raf = requestAnimationFrame(this.tick);
+  },
+  stop(){
+    if (!this.on && !this.raf) return;
+    this.on = false; cancelAnimationFrame(this.raf); this.raf = 0;
+    this.pool.push(...this.ring.map(f => f.c)); this.ring = [];
+    $("vdelayCanvas").hidden = true;
+    if (this.video) this.video.style.visibility = "";
+    this.video = null;
+  },
+  tick(now){
+    if (!this.on) return;
+    this.raf = requestAnimationFrame(this.tick);
+    const v = this.video;
+    if (!v || v.readyState < 2 || !v.videoWidth) return;
+    v.style.visibility = "hidden";            // keep decoding, show the delayed copy instead
+    if (now - this.last >= 33 && !v.paused){  // capture ~30 fps, downscaled to bound memory
+      this.last = now;
+      const w = Math.min(640, v.videoWidth), h = Math.round(w * v.videoHeight / v.videoWidth);
+      const c = this.pool.pop() || document.createElement("canvas");
+      if (c.width !== w || c.height !== h){ c.width = w; c.height = h; }
+      c.getContext("2d").drawImage(v, 0, 0, w, h);
+      this.ring.push({t:now, c});
+    }
+    const due = now - this.delay;
+    while (this.ring.length > 1 && this.ring[1].t <= due) this.pool.push(this.ring.shift().c);
+    const f = this.ring[0];
+    if (f && f.t <= due){
+      const cv = $("vdelayCanvas");
+      if (cv.width !== f.c.width || cv.height !== f.c.height){ cv.width = f.c.width; cv.height = f.c.height; }
+      this.ctx.drawImage(f.c, 0, 0);
+    }
+  }
+};
+
+const player = {
+  kind: null, station: null, el: null, hls: null, ctx: null, filters: null, eqOk: false, muted: false, preMute: 70,
+
+  ensureAudio(){
+    if (this.ctx) return;
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    this.ctx = new AC();
+  },
+  applyEq(){
+    if (!this.filters) return;
+    this.filters.forEach((f, i) => f.gain.value = settings.eq.enabled ? settings.eq.values[i] : 0);
+  },
+  teardown(){
+    if (this.hls){ try{ this.hls.destroy(); }catch{} this.hls = null; }
+    if (this.el){
+      try{ this.el.pause(); }catch{}
+      this.el.removeAttribute("src"); try{ this.el.load(); }catch{}
+      if (this.el.dataset.owned) this.el.remove();
+    }
+    if (this.filters){ try{ this.src.disconnect(); this.filters.forEach(f => f.disconnect()); this.delay && this.delay.disconnect(); }catch{} }
+    vdelay.stop();
+    this.el = null; this.filters = null; this.src = null; this.delay = null;
+  },
+  // Fresh media element per play so a non-CORS stream never gets stuck behind a Web Audio graph.
+  makeEl(kind, cors){
+    let el;
+    if (kind === "tv"){
+      el = document.createElement("video"); el.playsInline = true;
+      el.style.cssText = "width:100%;height:100%;object-fit:contain;background:#000";
+      $("video").replaceWith(el); el.id = "video";
+    } else { el = new Audio(); }
+    el.dataset.owned = kind === "radio" ? "1" : "";
+    if (cors) el.crossOrigin = "anonymous";
+    el.volume = settings.volume / 100; el.muted = this.muted;
+    el.addEventListener("playing", () => { $("videoMsg").hidden = true; });
+    return el;
+  },
+  attachEq(el){
+    this.eqOk = false;
+    this.ensureAudio(); if (!this.ctx) return;
+    try{
+      this.src = this.ctx.createMediaElementSource(el);
+      let node = this.src;
+      this.filters = EQ_FREQS.map((f, i) => {
+        const b = this.ctx.createBiquadFilter();
+        b.type = "peaking"; b.frequency.value = f; b.Q.value = 1.1; b.gain.value = 0;
+        node.connect(b); node = b; return b;
+      });
+      this.delay = this.ctx.createDelay(2.5);
+      node.connect(this.delay); this.delay.connect(this.ctx.destination);
+      this.eqOk = true; this.applyEq();
+    } catch(e){ this.filters = null; }
+  },
+  async play(kind, station, noCors){
+    this.stop(true);
+    this.kind = kind; this.station = station;
+    const isTv = kind === "tv";
+    $("nowPlaying").textContent = `${isTv ? "📺" : "🎵"} Now Playing: ${station.name || station.title || "Unknown"}`;
+    if (isTv) $("videoMsg").hidden = false, $("videoMsg").textContent = "Connecting…";
+    status(`Connecting to ${isTv ? "TV" : "radio"}: ${station.name}…`);
+    const url = station.url, bw = BW[settings.mode];
+    const useCors = !noCors;
+    const el = this.el = this.makeEl(kind, useCors);
+    if (isTv) el.dataset.owned = "";
+    if (useCors) this.attachEq(el); else { this.filters = null; this.eqOk = false; }
+    this.ctx?.state === "suspended" && this.ctx.resume();
+    this.playing = true; this.applySync();
+
+    let failed = false;
+    const fail = () => {
+      if (failed || this.el !== el) return; failed = true;
+      if (useCors){ status("Retrying without equalizer support (stream has no CORS headers)…"); this.play(kind, station, true); return; }
+      status(`Could not play “${station.name}”. The stream may be offline, blocked (CORS / mixed content) or unsupported.`);
+      $("videoMsg").hidden = false; $("videoMsg").textContent = "Unable to play this stream";
+      this.setPlaying(false);
+    };
+    el.addEventListener("error", fail);
+
+    const isHls = /\.m3u8(\?|$)/i.test(url);
+    if (isHls && window.Hls && Hls.isSupported()){
+      const buf = Math.max(2, +settings.buffer || 10);
+      const hls = this.hls = new Hls({maxBufferLength:buf, maxMaxBufferLength:buf * 2, startLevel:-1, enableWorker:true});
+      hls.on(Hls.Events.MANIFEST_PARSED, (_, d) => {
+        if (isFinite(bw.maxHeight)){
+          let cap = -1;
+          d.levels.forEach((l, i) => { if (l.height && l.height <= bw.maxHeight && (cap < 0 || l.height >= d.levels[cap].height)) cap = i; });
+          if (cap < 0 && d.levels.length) cap = d.levels.reduce((m, l, i) => (l.height || 1e9) < (d.levels[m].height || 1e9) ? i : m, 0);
+          if (cap >= 0){ hls.autoLevelCapping = cap; hls.currentLevel = cap; }
+        }
+        el.play().catch(() => {});
+      });
+      hls.on(Hls.Events.ERROR, (_, e) => {
+        if (!e.fatal) return;
+        if (e.type === Hls.ErrorTypes.NETWORK_ERROR && useCors) fail();
+        else if (e.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+        else fail();
+      });
+      hls.loadSource(url); hls.attachMedia(el);
+    } else {
+      el.src = url; el.play().catch(err => { if (err.name !== "AbortError" && err.name !== "NotAllowedError") fail(); });
+    }
+    this.setPlaying(true);
+    const eqNote = settings.eq.enabled && !this.eqOk ? " (equalizer unavailable for this stream)" : "";
+    status(`${isTv ? "📺" : "🎵"} ${bw.name} | Playing: ${station.name}${eqNote}`, 5000);
+  },
+  stop(silent){
+    this.teardown();
+    if (!silent){
+      this.setPlaying(false); $("nowPlaying").textContent = "🎵 Not Playing"; status("Stopped", 2000);
+      if (this.kind === "tv"){ $("videoMsg").hidden = false; $("videoMsg").textContent = "Select a TV channel to play"; }
+    }
+  },
+  setPlaying(p){ $("btnPlay").disabled = p; $("btnStop").disabled = !p; this.playing = p; },
+  setVolume(v){
+    settings.volume = v; saveSettings();
+    $("volLabel").textContent = v + "%"; $("vol").value = v;
+    $("fsVol").value = v; $("fsVolLabel").textContent = v + "%";
+    if (this.el) this.el.volume = v / 100;
+  },
+  // A/V sync: + delays the audio (Web Audio DelayNode), - delays the picture (frame buffer on a canvas).
+  setSync(ms){
+    ms = Math.max(-2000, Math.min(2000, Math.round(ms / 100) * 100));
+    settings.sync = ms; saveSettings();
+    const t = (ms > 0 ? "+" : "") + (ms / 1000).toFixed(1) + " s";
+    $("sync").value = $("fsSync").value = ms; $("syncLabel").textContent = $("fsSyncLabel").textContent = t;
+    this.applySync();
+  },
+  applySync(){
+    const ms = settings.sync || 0;
+    if (this.delay) this.delay.delayTime.value = Math.max(0, ms) / 1000;
+    if (ms < 0 && this.kind === "tv" && this.el && this.el.tagName === "VIDEO") vdelay.start(this.el, -ms);
+    else vdelay.stop();
+    $("syncNote").hidden = !(ms > 0 && this.playing && this.el && !this.delay);
+  },
+  toggleMute(){
+    this.muted = !this.muted; if (this.el) this.el.muted = this.muted;
+    $("btnMute").textContent = $("fsMute").textContent = this.muted ? "🔊 Unmute" : "🔇 Mute";
+  }
+};
+
+/* --------------------------------------------------------------------- tabs */
+const radioList = new ChannelList("radio", $("radioListSlot"));
+const tvList = new ChannelList("tv", $("tvListSlot"));
+let mode = "radio";
+function setMode(m){
+  mode = m;
+  $("tabRadio").classList.toggle("active", m === "radio");
+  $("tabTv").classList.toggle("active", m === "tv");
+  $("radioListSlot").hidden = m !== "radio";
+  $("tvListSlot").hidden = m !== "tv";
+  $("videoWrap").hidden = m !== "tv";
+  store.set("radiotv.mode", m);
+}
+$("tabRadio").onclick = () => setMode("radio");
+$("tabTv").onclick = () => setMode("tv");
+
+$("btnPlay").onclick = () => {
+  const list = mode === "radio" ? radioList : tvList;
+  if (list.current) player.play(mode, list.current); else alert(`Select a ${mode === "radio" ? "radio station" : "TV channel"} first.`);
+};
+$("btnStop").onclick = () => player.stop();
+$("btnMute").onclick = () => player.toggleMute();
+$("vol").oninput = e => player.setVolume(+e.target.value);
+$("sync").oninput = e => player.setSync(+e.target.value);
+$("syncReset").onclick = () => player.setSync(0);
+$("sync").ondblclick = () => player.setSync(0);
+$("btnBrowser").onclick = () => {
+  const s = (mode === "radio" ? radioList : tvList).current || player.station;
+  if (s) window.open(s.url, "_blank", "noopener"); else alert("Select an entry first.");
+};
+$("btnFull").onclick = () => {
+  if (mode !== "tv" || !player.playing || player.kind !== "tv") return alert("Play a TV channel first.");
+  const w = $("videoWrap");
+  if (document.fullscreenElement) document.exitFullscreen(); else w.requestFullscreen?.();
+};
+$("videoWrap").addEventListener("dblclick", e => { if (!e.target.closest("#fsBar")) $("btnFull").click(); });
+
+/* Fullscreen overlay: a single click shows/hides volume + A/V sync controls. */
+let fsTimer;
+function fsBar(show){
+  const bar = $("fsBar"); bar.hidden = !show; clearTimeout(fsTimer);
+  if (show) fsTimer = setTimeout(() => { if (bar.matches(":hover")) fsBar(true); else bar.hidden = true; }, 5000);
+}
+$("videoWrap").addEventListener("click", e => {
+  if (!document.fullscreenElement || e.target.closest("#fsBar")) return;
+  fsBar($("fsBar").hidden);
+});
+$("fsBar").addEventListener("input", () => fsBar(true));
+$("fsVol").oninput = e => player.setVolume(+e.target.value);
+$("fsSync").oninput = e => player.setSync(+e.target.value);
+$("fsReset").onclick = () => player.setSync(0);
+$("fsMute").onclick = () => player.toggleMute();
+$("fsExit").onclick = () => document.exitFullscreen();
+document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement) fsBar(false); });
+
+/* --------------------------------------------------------------- bandwidth */
+function updateBwIndicator(){
+  const b = BW[settings.mode];
+  $("bwInd").textContent = `📶 ${b.name}${settings.mode === "normal" ? "" : " • est. saving " + b.savings} • buffer ${settings.buffer}s`;
+}
+$("btnSettings").onclick = () => { $("setMode").value = settings.mode; $("setBuf").value = settings.buffer; $("dlgSettings").showModal(); };
+$("setCancel").onclick = () => $("dlgSettings").close();
+$("setOk").onclick = () => {
+  settings.mode = $("setMode").value;
+  settings.buffer = Math.min(60, Math.max(2, parseInt($("setBuf").value, 10) || 10));
+  saveSettings(); updateBwIndicator(); $("dlgSettings").close();
+  status("Settings saved — applies to the next stream", 3000);
+};
+
+/* ---------------------------------------------------------------- equalizer */
+(function buildEq(){
+  $("eqPreset").innerHTML = Object.keys(EQ_PRESETS).map(n => `<option>${n}</option>`).join("");
+  $("eqBands").innerHTML = EQ_LABELS.map((l, i) => `
+    <div><span>+20</span><br><input type="range" min="-20" max="20" value="0" data-i="${i}" aria-label="${l}"><br>
+    <span id="eqv${i}">0 dB</span><br><span>${l}</span></div>`).join("");
+  $("eqBands").addEventListener("input", e => {
+    const i = e.target.dataset.i; if (i == null) return;
+    settings.eq.values[i] = +e.target.value; $("eqv" + i).textContent = e.target.value + " dB";
+    // Moving a slider turns the equalizer on so the change is heard immediately.
+    if (!settings.eq.enabled && settings.eq.values.some(Boolean)) setEq(true); else player.applyEq();
+    saveSettings();
+  });
+})();
+function setEq(on){
+  settings.eq.enabled = !!on; $("eqEnable").checked = on; player.applyEq();
+  $("btnEq").classList.toggle("on", on); $("btnEq").textContent = on ? "🎛️ EQ ON" : "🎛️ Equalizer";
+  saveSettings();
+}
+function syncEqUi(){
+  settings.eq.values.forEach((v, i) => {
+    document.querySelector(`#eqBands input[data-i="${i}"]`).value = v; $("eqv" + i).textContent = v + " dB";
+  });
+  $("eqEnable").checked = settings.eq.enabled;
+  $("eqNote").textContent = player.playing && !player.eqOk
+    ? "Note: the current stream doesn't allow audio processing (no CORS headers), so the equalizer can't affect it."
+    : "The equalizer works on streams whose server allows cross-origin audio processing.";
+}
+$("btnEq").onclick = () => { syncEqUi(); $("dlgEq").showModal(); };
+$("eqEnable").onchange = e => setEq(e.target.checked);
+$("eqApply").onclick = () => {
+  settings.eq.values = [...EQ_PRESETS[$("eqPreset").value]]; syncEqUi();
+  if (settings.eq.values.some(Boolean)) setEq(true); else player.applyEq();
+  saveSettings(); status(`Applied ${$("eqPreset").value} preset`, 2000);
+};
+$("eqReset").onclick = () => { settings.eq.values = Array(10).fill(0); syncEqUi(); player.applyEq(); saveSettings(); };
+$("eqClose").onclick = () => $("dlgEq").close();
+
+/* ------------------------------------------------------------------ search */
+const COUNTRY_CODES = {in:"IN",india:"IN",us:"US",usa:"US","united states":"US","united states of america":"US",
+  gb:"GB",uk:"GB","united kingdom":"GB","great britain":"GB",ae:"AE",uae:"AE","united arab emirates":"AE",
+  ch:"CH",switzerland:"CH",de:"DE",germany:"DE",fr:"FR",france:"FR",it:"IT",italy:"IT",es:"ES",spain:"ES",
+  ca:"CA",canada:"CA",au:"AU",australia:"AU",nz:"NZ","new zealand":"NZ",jp:"JP",japan:"JP",cn:"CN",china:"CN",
+  br:"BR",brazil:"BR",mx:"MX",mexico:"MX",ru:"RU",russia:"RU",kr:"KR","south korea":"KR",korea:"KR",
+  kp:"KP","north korea":"KP",cz:"CZ",czechia:"CZ","czech republic":"CZ",nl:"NL",netherlands:"NL",za:"ZA","south africa":"ZA",
+  pk:"PK",pakistan:"PK",bd:"BD",bangladesh:"BD",lk:"LK","sri lanka":"LK",np:"NP",nepal:"NP",sg:"SG",singapore:"SG",
+  qa:"QA",qatar:"QA",sa:"SA","saudi arabia":"SA",tr:"TR",turkey:"TR",ie:"IE",ireland:"IE",se:"SE",sweden:"SE"};
+const ccode = v => COUNTRY_CODES[v.trim().toLowerCase()] || null;
+
+let searchState = null;
+function openSearch(kind, onAdd){
+  const isTv = kind === "tv";
+  searchState = {kind, onAdd, results:[], sel:null};
+  $("searchTitle").textContent = isTv ? "🔍 Search TV Channels (iptv-org)" : "🔍 Search Radio Stations (radio-browser)";
+  $("sExtra").placeholder = isTv ? "Language" : "Tag / genre";
+  $("sHead").innerHTML = isTv ? "<tr><th>Title</th><th>Country</th><th>Language</th><th>URL</th></tr>"
+                              : "<tr><th>Name</th><th>Country</th><th>Tags</th><th>Bitrate</th></tr>";
+  $("sBody").innerHTML = ""; $("sStatus").textContent = ""; $("sAdd").disabled = $("sPreview").disabled = true;
+  stopPreview(); $("dlgSearch").showModal(); $("sName").focus();
+}
+let pvHls = null;
+function stopPreview(){
+  if (pvHls){ try{ pvHls.destroy(); }catch{} pvHls = null; }
+  const v = $("pvVideo"); try{ v.pause(); }catch{} v.removeAttribute("src"); try{ v.load(); }catch{}
+  $("pvBox").hidden = true;
+}
+function startPreview(station){
+  stopPreview(); player.stop();
+  const v = $("pvVideo"), msg = $("pvMsg"); $("pvBox").hidden = false;
+  msg.textContent = `Previewing “${station.name}” — select it and press Add to keep it.`;
+  v.volume = settings.volume / 100;
+  const onFail = () => msg.textContent = `Could not play “${station.name}” (offline, blocked by the server, or unsupported). You can still add it.`;
+  v.onerror = onFail;
+  if (/\.m3u8(\?|$)/i.test(station.url) && window.Hls && Hls.isSupported()){
+    pvHls = new Hls();
+    pvHls.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
+    pvHls.on(Hls.Events.ERROR, (_, e) => { if (e.fatal) onFail(); });
+    pvHls.loadSource(station.url); pvHls.attachMedia(v);
+  } else { v.src = station.url; v.play().catch(err => { if (err.name === "NotSupportedError") onFail(); }); }
+}
+$("sClose").onclick = () => $("dlgSearch").close();
+$("dlgSearch").addEventListener("close", stopPreview);
+$("dlgSearch").addEventListener("keydown", e => { if (e.key === "Enter" && e.target.tagName === "INPUT") $("sGo").click(); });
+$("sGo").onclick = async () => {
+  const st = searchState, name = $("sName").value.trim(), country = $("sCountry").value.trim(), extra = $("sExtra").value.trim();
+  $("sGo").disabled = true; $("sStatus").textContent = "Searching…"; $("sBody").innerHTML = "";
+  try{
+    st.results = st.kind === "tv" ? await searchTv(name, country, extra) : await searchRadio(name, country, extra);
+    renderResults();
+    $("sStatus").textContent = st.results.length ? `Found ${st.results.length} ${st.kind === "tv" ? "playable TV channels" : "stations"}.` : "Nothing found.";
+  } catch(e){ $("sStatus").textContent = "Search error: " + e.message; }
+  $("sGo").disabled = false;
+};
+function renderResults(){
+  const st = searchState, tb = $("sBody"); tb.innerHTML = ""; st.sel = null;
+  $("sAdd").disabled = $("sPreview").disabled = true;
+  const shown = st.results.slice(0, 1500);
+  shown.forEach((r, i) => {
+    const tr = document.createElement("tr"); tr.dataset.i = i;
+    const cells = st.kind === "tv" ? [r.title, r.country, text(r.language), r.url]
+                                   : [r.name, r.country, text(r.tags).slice(0, 50), r.bitrate || ""];
+    cells.forEach(c => { const td = document.createElement("td"); td.textContent = c; td.title = c; tr.append(td); });
+    tb.append(tr);
+  });
+  if (st.results.length > shown.length) $("sStatus").textContent += ` (showing first ${shown.length})`;
+}
+$("sBody").addEventListener("click", e => {
+  const tr = e.target.closest("tr"); if (!tr) return;
+  $("sBody").querySelectorAll("tr.sel").forEach(x => x.classList.remove("sel")); tr.classList.add("sel");
+  searchState.sel = searchState.results[+tr.dataset.i]; $("sAdd").disabled = $("sPreview").disabled = false;
+});
+function toStation(r){
+  return searchState.kind === "tv"
+    ? {name:r.title, url:r.url, genre:text(r.category), country:text(r.country), extra:[r.quality, text(r.language)].filter(Boolean).join(" ")}
+    : {name:r.name, url:r.url_resolved || r.url, genre:(r.tags || "").split(",")[0] || "", country:r.country || "", extra:[r.codec, r.bitrate ? r.bitrate + "k" : ""].filter(Boolean).join(" ")};
+}
+$("sAdd").onclick = () => { const s = toStation(searchState.sel); if (searchState.onAdd(s) !== false) $("sStatus").textContent = `Added “${s.name}”.`; };
+$("sPreview").onclick = () => startPreview(toStation(searchState.sel));
+
+async function getJson(url){
+  const r = await fetch(url); if (!r.ok) throw new Error("HTTP " + r.status); return r.json();
+}
+async function searchRadio(name, country, tag){
+  const p = new URLSearchParams({limit:1000, hidebroken:"true", order:"votes", reverse:"true"});
+  if (name) p.set("name", name);
+  if (tag) p.set("tag", tag);
+  const code = country && ccode(country);
+  if (code) p.set("countrycode", code); else if (country){ p.set("country", country); p.set("countryExact", "false"); }
+  let data = await getJson("https://de1.api.radio-browser.info/json/stations/search?" + p);
+  if (country && !code) data = data.filter(s => (s.country || "").toLowerCase().includes(country.toLowerCase()));
+  return data.filter(s => s.url_resolved || s.url).sort((a, b) => text(a.name).localeCompare(text(b.name), undefined, {sensitivity:"base"}));
+}
+let tvCache = null;
+async function searchTv(name, country, language){
+  if (!tvCache){
+    $("sStatus").textContent = "Downloading TV channel database…";
+    const [channels, streams] = await Promise.all([
+      getJson("https://iptv-org.github.io/api/channels.json"), getJson("https://iptv-org.github.io/api/streams.json")]);
+    tvCache = {channels, streams};
+  }
+  const nq = name.toLowerCase(), lq = language.toLowerCase(), cq = country.toLowerCase(), want = (ccode(country) || "").toLowerCase();
+  const info = new Map();
+  for (const c of tvCache.channels){
+    if (!c.id) continue;
+    const cc = text(c.country).toLowerCase();
+    const okC = !cq || (want && cc === want) || cc === cq || cc.includes(cq);
+    const okN = !nq || text(c.name).toLowerCase().includes(nq);
+    const okL = !lq || text(c.languages ?? c.language).toLowerCase().includes(lq);
+    if (okC && okN && okL) info.set(c.id, c);
+  }
+  const out = [];
+  for (const s of tvCache.streams){
+    if (!s.url || !s.channel || !info.has(s.channel)) continue;
+    const c = info.get(s.channel);
+    out.push({...s, title:c.name || s.title || "Unknown", country:c.country || "", language:c.languages || c.language || s.language || "",
+              category:c.categories || "", channel_id:s.channel});
+  }
+  return out.sort((a, b) => text(a.title).localeCompare(text(b.title), undefined, {sensitivity:"base"}));
+}
+
+/* -------------------------------------------------------------------- data */
+$("btnData").onclick = () => $("dlgData").showModal();
+$("dataClose").onclick = () => $("dlgData").close();
+$("dataExport").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type:"application/json"}));
+  a.download = "radio_tv_stations.json"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+$("dataImport").onclick = () => $("dataFile").click();
+$("dataFile").onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  try{
+    const j = JSON.parse(await f.text());
+    if (!Array.isArray(j.radio) && !Array.isArray(j.tv)) throw new Error("no radio/tv lists found");
+    let n = 0;
+    for (const k of ["radio", "tv"]) for (const s of (j[k] || [])){
+      if (s && s.name && s.url && !data[k].some(x => x.url === s.url)){ data[k].push({name:s.name, url:s.url, genre:text(s.genre), country:text(s.country), extra:text(s.extra)}); n++; }
+    }
+    saveData(); radioList.reload(); tvList.reload(); status(`Imported ${n} new entries`, 4000);
+  } catch(err){ alert("Import failed: " + err.message); }
+};
+$("dataReset").onclick = () => {
+  if (!confirm("Replace both lists with the defaults?")) return;
+  data.radio = JSON.parse(JSON.stringify(DEFAULTS.radio)); data.tv = JSON.parse(JSON.stringify(DEFAULTS.tv));
+  saveData(); radioList.reload(); tvList.reload();
+};
+
+/* -------------------------------------------------------- layout / theme */
+$("btnTheme").onclick = () => {
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const cur = document.documentElement.dataset.theme || (dark ? "dark" : "light");
+  const next = cur === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next; store.set("radiotv.theme", next);
+};
+(() => { const t = store.get("radiotv.theme", null); if (t) document.documentElement.dataset.theme = t; })();
+
+(function splitter(){
+  const sp = $("splitter"), left = $("left");
+  const w = store.get("radiotv.leftWidth", null); if (w) left.style.width = w + "px";
+  sp.addEventListener("pointerdown", e => {
+    sp.setPointerCapture(e.pointerId);
+    const move = ev => { const nw = Math.min(innerWidth * 0.6, Math.max(260, ev.clientX)); left.style.width = nw + "px"; };
+    const up = () => { sp.removeEventListener("pointermove", move); sp.removeEventListener("pointerup", up); store.set("radiotv.leftWidth", left.offsetWidth); };
+    sp.addEventListener("pointermove", move); sp.addEventListener("pointerup", up);
+  });
+})();
+
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input,select,textarea") || document.querySelector("dialog[open]")) return;
+  if (e.key === " "){ e.preventDefault(); player.playing ? $("btnStop").click() : $("btnPlay").click(); }
+  if (e.key.toLowerCase() === "f") $("btnFull").click();
+  if (e.key.toLowerCase() === "m") $("btnMute").click();
+});
+
+/* -------------------------------------------------------------------- init */
+player.setVolume(settings.volume);
+player.setSync(settings.sync || 0);
+updateBwIndicator();
+setEq(settings.eq.enabled);
+setMode(store.get("radiotv.mode", "radio"));
+if (!window.Hls) status("hls.js could not be loaded (offline?) — HLS TV streams need it except in Safari.");
+</script>
+</body>
+</html>
