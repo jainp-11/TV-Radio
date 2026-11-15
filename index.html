@@ -70,6 +70,12 @@ legend{padding:0 4px;color:var(--muted);font-size:12px}
 #vdelayCanvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;pointer-events:none}
 #fsBar{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);width:min(560px,92%);background:rgba(20,24,34,.88);color:#fff;
   border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:10px 14px;display:grid;grid-template-columns:auto 1fr auto;gap:8px 12px;align-items:center;z-index:5;backdrop-filter:blur(4px)}
+.navbtn{position:absolute;top:50%;transform:translateY(-50%);width:34px;height:66px;padding:0;border:none;background:rgba(0,0,0,.4);color:#fff;
+  font-size:20px;line-height:1;z-index:4;opacity:.45;transition:opacity .15s,background .15s}
+.navbtn:hover:not(:disabled){opacity:1;background:rgba(33,150,243,.85)}
+#chPrev{left:0;border-radius:0 10px 10px 0}
+#chNext{right:0;border-radius:10px 0 0 10px}
+#fsName{grid-column:1/-1;font-weight:700;font-size:15px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #fsBar span.v{min-width:56px;text-align:right;font-variant-numeric:tabular-nums}
 #fsBar button{background:rgba(255,255,255,.12);color:#fff;border-color:rgba(255,255,255,.25)}
 #fsBar input[type=range]{width:100%}
@@ -165,7 +171,10 @@ dialog h2{margin:0 0 10px;font-size:16px}
       <video id="video" playsinline></video>
       <canvas id="vdelayCanvas" hidden></canvas>
       <div id="videoMsg">Select a TV channel to play</div>
+      <button id="chPrev" class="navbtn" title="Previous channel" aria-label="Previous channel">◀</button>
+      <button id="chNext" class="navbtn" title="Next channel" aria-label="Next channel">▶</button>
       <div id="fsBar" hidden>
+        <div id="fsName">📺 —</div>
         <label for="fsVol">🔊 Volume</label><input id="fsVol" type="range" min="0" max="100"><span class="v" id="fsVolLabel">70%</span>
         <label for="fsSync">⏱ A/V sync</label><input id="fsSync" type="range" min="-2000" max="2000" step="100"><span class="v" id="fsSyncLabel">0.0 s</span>
         <div class="btns"><button id="fsMute">🔇 Mute</button><button id="fsReset">↺ Sync 0</button><button id="fsExit">✕ Exit fullscreen</button></div>
@@ -341,6 +350,13 @@ class ChannelList {
     });
     this.countEl.textContent = f ? `${this.view.length} matches` : `${this.items.length} ${this.kind === "radio" ? "stations" : "channels"}`;
   }
+  step(dir){
+    const v = this.view; if (!v.length) return;
+    const i = v.indexOf(this.current);
+    const n = i < 0 ? (dir > 0 ? 0 : v.length - 1) : (i + dir + v.length) % v.length;
+    this.select(v[n], true);
+    this.ul.querySelector("li.sel")?.scrollIntoView({block:"nearest"});
+  }
   select(s, play){
     this.current = s; this.render();
     this.infoEl.textContent = `Name: ${text(s.name,"N/A")}\nURL: ${text(s.url,"N/A")}\nGenre: ${text(s.genre,"N/A")}\nCountry: ${text(s.country,"N/A")}\nExtra: ${text(s.extra,"N/A")}`;
@@ -444,6 +460,41 @@ const vdelay = {
   }
 };
 
+/* Keep the screen on while a stream is playing (Screen Wake Lock API). */
+let wakeLock = null;
+async function keepAwake(on){
+  try{
+    if (on){
+      if (wakeLock || !navigator.wakeLock) return;
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    } else if (wakeLock){ const w = wakeLock; wakeLock = null; await w.release(); }
+  } catch { wakeLock = null; }   // denied / unsupported: playback is unaffected
+}
+// The browser drops the lock when the tab is hidden; take it again when we come back.
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && player.playing && player.kind === "tv") keepAwake(true); });
+
+/* Phones: keep radio playing with the screen locked. Web Audio graphs (equalizer) get suspended by
+   mobile browsers when the screen turns off, so on a phone radio plays straight through the media element. */
+const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.userAgentData && navigator.userAgentData.mobile);
+try{ if (navigator.audioSession) navigator.audioSession.type = "playback"; }catch{}
+
+/* Media Session: lock-screen / notification controls, and tells the OS this is ongoing media playback. */
+function updateMediaSession(station, isTv){
+  if (!("mediaSession" in navigator)) return;
+  try{
+    navigator.mediaSession.metadata = new MediaMetadata({title:station.name || station.title || "Unknown",
+      artist:isTv ? "TV" : "Radio", album:"Radio + TV Player"});
+    const list = () => isTv ? tvList : radioList;
+    const h = (a, fn) => { try{ navigator.mediaSession.setActionHandler(a, fn); }catch{} };
+    h("play", () => { const el = player.el; if (el && el.paused) el.play().catch(() => player.play(player.kind, player.station)); else if (!el) player.play(player.kind, player.station); navigator.mediaSession.playbackState = "playing"; });
+    h("pause", () => { player.el && player.el.pause(); navigator.mediaSession.playbackState = "paused"; });
+    h("stop", () => player.stop());
+    h("previoustrack", () => list().step(-1));
+    h("nexttrack", () => list().step(1));
+  } catch {}
+}
+
 const player = {
   kind: null, station: null, el: null, hls: null, ctx: null, filters: null, eqOk: false, muted: false, preMute: 70,
 
@@ -502,10 +553,11 @@ const player = {
     this.kind = kind; this.station = station;
     const isTv = kind === "tv";
     $("nowPlaying").textContent = `${isTv ? "📺" : "🎵"} Now Playing: ${station.name || station.title || "Unknown"}`;
+    if (isTv) $("fsName").textContent = `📺 ${station.name || station.title || "Unknown"}`;
     if (isTv) $("videoMsg").hidden = false, $("videoMsg").textContent = "Connecting…";
     status(`Connecting to ${isTv ? "TV" : "radio"}: ${station.name}…`);
     const url = station.url, bw = BW[settings.mode];
-    const useCors = !noCors;
+    const useCors = !noCors && !(IS_MOBILE && !isTv);   // phones: radio bypasses Web Audio so it survives screen lock
     const el = this.el = this.makeEl(kind, useCors);
     if (isTv) el.dataset.owned = "";
     if (useCors) this.attachEq(el); else { this.filters = null; this.eqOk = false; }
@@ -546,7 +598,8 @@ const player = {
       el.src = url; el.play().catch(err => { if (err.name !== "AbortError" && err.name !== "NotAllowedError") fail(); });
     }
     this.setPlaying(true);
-    const eqNote = settings.eq.enabled && !this.eqOk ? " (equalizer unavailable for this stream)" : "";
+    updateMediaSession(station, isTv);
+    const eqNote = settings.eq.enabled && !this.eqOk ? (IS_MOBILE && !isTv ? " (equalizer is off for radio on phones so it keeps playing when the screen locks)" : " (equalizer unavailable for this stream)") : "";
     status(`${isTv ? "📺" : "🎵"} ${bw.name} | Playing: ${station.name}${eqNote}`, 5000);
   },
   stop(silent){
@@ -556,7 +609,10 @@ const player = {
       if (this.kind === "tv"){ $("videoMsg").hidden = false; $("videoMsg").textContent = "Select a TV channel to play"; }
     }
   },
-  setPlaying(p){ $("btnPlay").disabled = p; $("btnStop").disabled = !p; this.playing = p; },
+  setPlaying(p){ $("btnPlay").disabled = p; $("btnStop").disabled = !p; this.playing = p;
+    keepAwake(p && this.kind === "tv");      // screen stays on for TV only; radio may let the screen dim / lock
+    if ("mediaSession" in navigator) navigator.mediaSession.playbackState = p ? "playing" : "none";
+  },
   setVolume(v){
     settings.volume = v; saveSettings();
     $("volLabel").textContent = v + "%"; $("vol").value = v;
@@ -619,7 +675,9 @@ $("btnFull").onclick = () => {
   const w = $("videoWrap");
   if (document.fullscreenElement) document.exitFullscreen(); else w.requestFullscreen?.();
 };
-$("videoWrap").addEventListener("dblclick", e => { if (!e.target.closest("#fsBar")) $("btnFull").click(); });
+$("videoWrap").addEventListener("dblclick", e => { if (!e.target.closest("#fsBar,.navbtn")) $("btnFull").click(); });
+$("chPrev").onclick = () => tvList.step(-1);
+$("chNext").onclick = () => tvList.step(1);
 
 /* Fullscreen overlay: a single click shows/hides volume + A/V sync controls. */
 let fsTimer;
@@ -628,10 +686,12 @@ function fsBar(show){
   if (show) fsTimer = setTimeout(() => { if (bar.matches(":hover")) fsBar(true); else bar.hidden = true; }, 5000);
 }
 $("videoWrap").addEventListener("click", e => {
-  if (!document.fullscreenElement || e.target.closest("#fsBar")) return;
+  if (!document.fullscreenElement || e.target.closest("#fsBar,.navbtn")) return;
   fsBar($("fsBar").hidden);
 });
 $("fsBar").addEventListener("input", () => fsBar(true));
+$("chPrev").addEventListener("click", () => document.fullscreenElement && !$("fsBar").hidden && fsBar(true));
+$("chNext").addEventListener("click", () => document.fullscreenElement && !$("fsBar").hidden && fsBar(true));
 $("fsVol").oninput = e => player.setVolume(+e.target.value);
 $("fsSync").oninput = e => player.setSync(+e.target.value);
 $("fsReset").onclick = () => player.setSync(0);
