@@ -122,6 +122,7 @@ dialog h2{margin:0 0 10px;font-size:16px}
   <h1>🎙️ Internet Radio + 📺 TV Player</h1>
   <button id="btnSettings">⚙️ Settings</button>
   <button id="btnData">💾 Data</button>
+  <button id="btnAbout" title="About / data savings">ℹ️</button>
   <button id="btnTheme" title="Toggle dark / light">🌓</button>
 </header>
 
@@ -235,6 +236,15 @@ dialog h2{margin:0 0 10px;font-size:16px}
   </div>
   <p class="count" style="white-space:normal">Applies to the next stream you play. Low modes cap the HLS video resolution and reduce buffering.</p>
   <div class="dlgbtns"><button id="setCancel">Cancel</button><button id="setOk" class="primary">Save</button></div>
+</dialog>
+
+<!-- About -->
+<dialog id="dlgAbout" class="small">
+  <h2>🎙️ Radio + 📺 TV Player</h2>
+  <p style="margin:0 0 8px">Internet radio and live TV with search (radio-browser.info, iptv-org), equalizer, A/V sync, bandwidth modes and fullscreen controls.</p>
+  <p class="count" style="white-space:normal"><b>Shortcuts:</b> Space play/stop • F fullscreen • M mute • ←/→ previous/next TV channel</p>
+  <p id="aboutSavings" class="count" style="white-space:normal"></p>
+  <div class="dlgbtns"><button id="aboutClose" class="primary">Close</button></div>
 </dialog>
 
 <!-- Equalizer -->
@@ -704,6 +714,14 @@ function updateBwIndicator(){
   const b = BW[settings.mode];
   $("bwInd").textContent = `📶 ${b.name}${settings.mode === "normal" ? "" : " • est. saving " + b.savings} • buffer ${settings.buffer}s`;
 }
+$("btnAbout").onclick = () => {
+  const b = BW[settings.mode];
+  $("aboutSavings").textContent = `Current mode: ${b.name}. Estimated data saving: ${b.savings}. ` +
+    (settings.mode === "normal" ? "Switch to Low or Ultra Low in Settings to cap video resolution and buffering." :
+     `Video is capped at ${b.maxHeight}p and the buffer is ${settings.buffer}s.`);
+  $("dlgAbout").showModal();
+};
+$("aboutClose").onclick = () => $("dlgAbout").close();
 $("btnSettings").onclick = () => { $("setMode").value = settings.mode; $("setBuf").value = settings.buffer; $("dlgSettings").showModal(); };
 $("setCancel").onclick = () => $("dlgSettings").close();
 $("setOk").onclick = () => {
@@ -846,12 +864,22 @@ async function searchRadio(name, country, tag){
   return data.filter(s => s.url_resolved || s.url).sort((a, b) => text(a.name).localeCompare(text(b.name), undefined, {sensitivity:"base"}));
 }
 let tvCache = null;
+const idb = {
+  open(){ return new Promise((res, rej) => { const r = indexedDB.open("radiotv", 1); r.onupgradeneeded = () => r.result.createObjectStore("kv"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); },
+  async get(k){ try{ const db = await this.open(); return await new Promise(res => { const q = db.transaction("kv").objectStore("kv").get(k); q.onsuccess = () => res(q.result); q.onerror = () => res(undefined); }); } catch { return undefined; } },
+  async set(k, v){ try{ const db = await this.open(); await new Promise(res => { const t = db.transaction("kv", "readwrite"); t.objectStore("kv").put(v, k); t.oncomplete = res; t.onerror = res; }); } catch {} }
+};
 async function searchTv(name, country, language){
   if (!tvCache){
-    $("sStatus").textContent = "Downloading TV channel database…";
-    const [channels, streams] = await Promise.all([
-      getJson("https://iptv-org.github.io/api/channels.json"), getJson("https://iptv-org.github.io/api/streams.json")]);
-    tvCache = {channels, streams};
+    const saved = await idb.get("tvdb");
+    if (saved && Date.now() - saved.t < 86400000){ tvCache = saved; }
+    else {
+      $("sStatus").textContent = "Downloading TV channel database…";
+      const [channels, streams] = await Promise.all([
+        getJson("https://iptv-org.github.io/api/channels.json"), getJson("https://iptv-org.github.io/api/streams.json")]);
+      tvCache = {channels, streams, t:Date.now()};
+      idb.set("tvdb", tvCache);          // reused for 24 hours
+    }
   }
   const nq = name.toLowerCase(), lq = language.toLowerCase(), cq = country.toLowerCase(), want = (ccode(country) || "").toLowerCase();
   const info = new Map();
@@ -925,6 +953,8 @@ document.addEventListener("keydown", e => {
   if (e.key === " "){ e.preventDefault(); player.playing ? $("btnStop").click() : $("btnPlay").click(); }
   if (e.key.toLowerCase() === "f") $("btnFull").click();
   if (e.key.toLowerCase() === "m") $("btnMute").click();
+  if (mode === "tv" && e.key === "ArrowLeft") tvList.step(-1);
+  if (mode === "tv" && e.key === "ArrowRight") tvList.step(1);
 });
 
 /* -------------------------------------------------------------------- init */
